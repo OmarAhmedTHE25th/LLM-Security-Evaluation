@@ -11,7 +11,7 @@ from main import export_reports, load_all_payloads
 class HarnessTests(unittest.TestCase):
     def test_all_payloads_are_valid_and_loaded(self):
         suite = load_all_payloads("payloads")
-        self.assertEqual(len(suite), 8)
+        self.assertEqual(len(suite), 28)
         self.assertTrue(all(test.id and category for test, category in suite))
 
     def test_export_reports_writes_json_and_markdown(self):
@@ -19,6 +19,8 @@ class HarnessTests(unittest.TestCase):
             test_id="TEST-01",
             name="Export smoke test",
             category="Test",
+            mode="hardened",
+            status="PASS",
             passed=True,
             triggered_indicator="-",
             raw_response="safe response",

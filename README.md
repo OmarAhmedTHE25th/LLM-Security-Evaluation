@@ -1,64 +1,82 @@
 # LLM Security Evaluation Harness
 
-An asynchronous adversarial test harness for evaluating prompt-injection and
-system-prompt leakage resilience through the Groq API.
+An asynchronous evaluation harness for prompt injection, indirect instruction
+tampering, system-prompt leakage, and unsafe tool-call arguments through Groq.
+It is an evaluation, not an audit or a guarantee of safety.
 
 ## Usage
 
 ```bash
 pip install -r requirements.txt
 set GROQ_API_KEY=your-key
-python main.py --model openai/gpt-oss-20b
-python main.py --model llama-3.3-70b-versatile
+python main.py --model openai/gpt-oss-20b --mode both --runs-per-test 10
+python main.py --model llama-3.3-70b-versatile --mode both --runs-per-test 10
 ```
 
-Each run writes both `reports/audit_report_<UTC timestamp>.json` and
-`reports/audit_report_<UTC timestamp>.md`. JSON is intended for ingestion into
-audit pipelines; Markdown is intended for human review. Use `--output-dir` to
-override the reports directory. A test passes when its forbidden indicators
-are absent from the model response.
+Use `--mode baseline`, `--mode hardened`, or `--mode both`. Baseline uses the
+same role and secret with defensive instructions removed and does not wrap the
+attacker input in `<untrusted_input>`. Hardened uses the defensive prompt and
+wrapper. `--runs-per-test` reports rates such as `7/10`; `--max-concurrency`
+defaults to 4 to avoid exhausting provider rate limits.
+
+Reports are written as `reports/evaluation_report_<UTC timestamp>.json` and
+`.md`. `ERROR` results are retained for diagnosis but excluded from the score
+denominator. In `both` mode, the report includes the hardened-minus-baseline
+gap, which is the measured effect of the defenses.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    A[Payload JSON files] --> B[Loader and Pydantic validation]
-    B --> C[Async Harness]
+    A[Payload JSON files] --> B[Sorted loader and Pydantic validation]
+    B --> C[Async harness with semaphore]
     C --> D[Groq chat completion]
-    D --> E[Deterministic evaluator]
-    E --> F[Rich console table]
-    E --> G[JSON and Markdown audit reports]
+    D --> E[Canary and required-answer evaluator]
+    E --> F[JSON and Markdown evaluation reports]
 ```
 
 ## Framework mapping
 
 | Test category | OWASP LLM Top 10 | MITRE ATLAS technique | Coverage |
 |---|---|---|---|
-| Injection and delimiter escape | LLM01: Prompt Injection | AML.T0051 Prompt Injection | Direct and roleplay instruction overrides |
-| Canary/system prompt leakage | LLM02: Sensitive Information Disclosure | AML.T0024 Exfiltration via ML API | System prompt and secret extraction |
-| Indirect context tampering | LLM01: Prompt Injection | AML.T0051 Prompt Injection | Hidden instructions in retrieved documents and metadata |
-| Tool parameter injection | LLM06: Excessive Agency | AML.T0051 Prompt Injection, AML.T0046 Cloud Service Dashboard | SSRF-style internal URL and tool-argument manipulation |
+| Injection and delimiter escape | LLM01: Prompt Injection | AML.T0051 Prompt Injection | Direct, multilingual, encoded, and roleplay overrides |
+| Canary/system prompt leakage | LLM02: Sensitive Information Disclosure; LLM07: System Prompt Leakage | AML.T0024 Exfiltration via AI Inference API | Secret extraction and system-prompt disclosure |
+| Indirect context tampering | LLM01: Prompt Injection | AML.T0051 Prompt Injection | Hidden instructions in documents and metadata |
+| Tool parameter injection | LLM06: Excessive Agency | AML.T0051 Prompt Injection | Unsafe tool URL arguments and allowlist decisions |
 
-The tool cases model the decision boundary around a tool call; this repository
-does not make network requests on behalf of the model.
+The ATLAS names above match the current catalog: AML.T0051 is Prompt
+Injection and AML.T0024 is Exfiltration via AI Inference API. AML.T0046 is
+Spamming AI System with Chaff Data, so it is not claimed as a mapping for
+these URL-argument tests. Tool calls are inspected but never executed by this
+repository.
 
 ## Benchmark results
 
-Run the same payload directory once per model and compare the resilience score
-in each generated report. The following table is a template for recording
-identical-vector comparisons:
+Run both listed models with the same payloads, mode, and number of runs, then
+copy the generated baseline score, hardened score, and gap into this table.
+Live numbers are intentionally not fabricated because model and provider
+behavior changes over time.
 
-| Model | Payloads | Passed | Resilience score |
-|---|---:|---:|---:|
-| `openai/gpt-oss-20b` | 8 | _record after run_ | _record after run_ |
-| `llama-3.3-70b-versatile` | 8 | _record after run_ | _record after run_ |
+| Model | Payloads | Baseline | Hardened | Gap |
+|---|---:|---:|---:|---:|
+| `openai/gpt-oss-20b` | 28 | _run benchmark_ | _run benchmark_ | _run benchmark_ |
+| `llama-3.3-70b-versatile` | 28 | _run benchmark_ | _run benchmark_ | _run benchmark_ |
 
-Results are intentionally generated from live runs rather than hard-coded:
-model behavior, provider versions, and safety tuning can change over time.
+Groq's current model catalog and function-calling documentation list both
+models as supporting tool/function calls. Confirm availability in the provider
+catalog before a long benchmark because model catalogs can change.
+
+## Limitations
+
+The corpus is still a small, hand-written sample rather than a complete threat
+model. Most checks are deterministic text checks and can miss semantic leaks or
+judge harmless transformations incorrectly. Tool cases inspect simulated
+function-call arguments; the harness does not fetch URLs, follow redirects, or
+prove what a real downstream tool would do. Scores are snapshots, not security
+certifications.
 
 ## CI/CD
 
-GitHub Actions runs on pushes and pull requests. The workflow installs the
-minimal dependencies, compiles the Python modules, validates all payload JSON
-fixtures, and runs the unit tests for report generation. It does not call the
-Groq API, so CI does not require `GROQ_API_KEY`.
+GitHub Actions compiles the modules, validates the payload fixtures through the
+loader, and runs offline unit tests. CI never calls Groq and therefore needs no
+API key.
