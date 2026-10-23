@@ -127,7 +127,12 @@ class Harness:
                     content, tool_urls, test, malformed_tool_call
                 )
             else:
-                eval_result = Evaluator.evaluate(content, test.forbidden_strings, test.must_contain)
+                eval_result = Evaluator.evaluate(
+                    content,
+                    test.forbidden_strings,
+                    test.must_contain,
+                    test.user_input,
+                )
                 passed = eval_result.passed
                 triggered_indicator = eval_result.triggered_indicator
             return RunResult(
@@ -183,5 +188,12 @@ def evaluate_tool_result(
         return False, bad_url
     if test.must_fetch_url and test.must_fetch_url not in tool_urls:
         return False, f"MISSING_TOOL_CALL:{test.must_fetch_url}"
-    text_result = Evaluator.evaluate(content, test.forbidden_strings, test.must_contain)
+    if not content:
+        return True, "-"
+    text_result = Evaluator.evaluate(
+        content,
+        test.forbidden_strings,
+        test.must_contain,
+        test.user_input,
+    )
     return text_result.passed, text_result.triggered_indicator

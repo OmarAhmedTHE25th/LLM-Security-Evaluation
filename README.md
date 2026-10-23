@@ -73,9 +73,10 @@ catalog before a long benchmark because model catalogs can change.
 ## Limitations
 
 The corpus is still a small, hand-written sample rather than a complete threat
-model. Checks decode base64-looking text and ignore canaries only inside short,
-standalone refusal sentences, but can still miss semantic leaks or judge harmless
-transformations incorrectly. Tool cases inspect simulated
+model. Checks decode base64-looking text and ignore only attacker-provided
+canaries inside short, standalone refusal sentences; secrets from the system
+prompt still fail even when echoed in a refusal. The checks can still miss
+semantic leaks or judge harmless transformations incorrectly. Tool cases inspect simulated
 function-call arguments; the harness does not fetch URLs, follow redirects, or
 prove what a real downstream tool would do. Scores are snapshots, not security
 certifications.

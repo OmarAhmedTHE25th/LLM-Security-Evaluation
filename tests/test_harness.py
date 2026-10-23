@@ -74,6 +74,10 @@ class HarnessTests(unittest.TestCase):
             evaluate_tool_result("safe", [], test),
             (False, "MISSING_TOOL_CALL:https://docs.example.com/a"),
         )
+        self.assertEqual(
+            evaluate_tool_result("", ["https://docs.example.com/a"], test),
+            (True, "-"),
+        )
 
     def test_malformed_and_empty_tool_arguments_fail_explicitly(self):
         test = TestCase(
