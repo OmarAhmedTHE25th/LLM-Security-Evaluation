@@ -2,7 +2,9 @@ import argparse
 import asyncio
 import glob
 import json
+import math
 import os
+import subprocess
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,60 +29,105 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Run the LLM security evaluation suite.")
     parser.add_argument("--model", default="openai/gpt-oss-20b")
     parser.add_argument("--output-dir", default="reports")
-    parser.add_argument("--mode", choices=["baseline", "hardened", "both"], default="hardened")
+    parser.add_argument("--mode", choices=["baseline", "hardened", "both", "ablation"], default="hardened")
     parser.add_argument("--runs-per-test", type=int, default=3)
     parser.add_argument("--max-concurrency", type=int, default=2)
     return parser.parse_args()
 
 
-def _score(results: list[RunResult]) -> tuple[int, int, float | None]:
-    usable = [result for result in results if result.status != "ERROR"]
+def get_git_sha() -> str:
+    try:
+        return subprocess.check_output(["git", "rev-parse", "HEAD"]).decode("ascii").strip()
+    except Exception:
+        return "unknown"
+
+
+def wilson_interval(passed: int, n: int) -> tuple[float, float]:
+    if n == 0:
+        return 0.0, 0.0
+    z = 1.96
+    p = passed / n
+    den = 1 + z**2 / n
+    adj = z**2 / (2 * n)
+    err = z * math.sqrt((p * (1 - p) + z**2 / (4 * n)) / n)
+    return (p + adj - err) / den * 100, (p + adj + err) / den * 100
+
+
+def _score(results: list[RunResult]) -> dict[str, Any]:
+    usable = [result for result in results if result.status not in ("ERROR", "INCONCLUSIVE")]
     passed = sum(result.passed for result in usable)
-    return passed, len(usable), passed / len(usable) * 100 if usable else None
+    n = len(usable)
+    score = passed / n * 100 if n > 0 else None
+    lower, upper = wilson_interval(passed, n)
+    return {
+        "passed": passed,
+        "denominator": n,
+        "score": score,
+        "lower": lower,
+        "upper": upper,
+        "inconclusive": sum(r.status == "INCONCLUSIVE" for r in results),
+        "errors": sum(r.status == "ERROR" for r in results),
+    }
 
 
 def export_reports(
-    results: list[RunResult], model: str, output_dir: str, generated_at: datetime
+    results: list[RunResult], model: str, output_dir: str, generated_at: datetime,
+    args: argparse.Namespace | None = None
 ) -> Path:
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
     timestamp = generated_at.strftime("%Y_%m_%dT%H_%M_%SZ")
     report_base = output_path / f"evaluation_report_{timestamp}"
     modes = sorted({result.mode for result in results})
+    categories = sorted({result.category for result in results})
     summaries: dict[str, Any] = {}
     for mode in modes:
-        passed, denominator, score = _score([r for r in results if r.mode == mode])
+        s = _score([r for r in results if r.mode == mode])
         summaries[mode] = {
-            "passed": passed, "denominator": denominator,
-            "errors": sum(r.status == "ERROR" for r in results if r.mode == mode),
-            "resilience_score": round(score, 1) if score is not None else None,
+            "passed": s["passed"], "denominator": s["denominator"],
+            "errors": s["errors"], "inconclusive": s["inconclusive"],
+            "resilience_score": round(s["score"], 1) if s["score"] is not None else None,
+            "interval": [round(s["lower"], 1), round(s["upper"], 1)] if s["score"] is not None else None,
         }
-    if len(modes) == 1:
-        summaries["passed"] = summaries[modes[0]]["passed"]
-        summaries["total"] = summaries[modes[0]]["denominator"]
-        summaries["resilience_score"] = summaries[modes[0]]["resilience_score"]
     if "baseline" in summaries and "hardened" in summaries:
-        baseline_score = summaries["baseline"]["resilience_score"]
-        hardened_score = summaries["hardened"]["resilience_score"]
-        summaries["gap"] = (
-            round(hardened_score - baseline_score, 1)
-            if baseline_score is not None and hardened_score is not None
-            else None
-        )
+        b_score = summaries["baseline"]["resilience_score"]
+        h_score = summaries["hardened"]["resilience_score"]
+        summaries["gap"] = round(h_score - b_score, 1) if b_score is not None and h_score is not None else None
+
+    cat_summaries = []
+    for mode in modes:
+        for cat in categories:
+            s = _score([r for r in results if r.mode == mode and r.category == cat])
+            cat_summaries.append({
+                "mode": mode, "category": cat, "passed": s["passed"], "denominator": s["denominator"],
+                "resilience_score": round(s["score"], 1) if s["score"] is not None else None,
+            })
+
     grouped: dict[tuple[str, str, str], list[RunResult]] = defaultdict(list)
     for result in results:
         grouped[(result.mode, result.test_id, result.name)].append(result)
     test_summaries = []
     for (mode, test_id, name), test_results in grouped.items():
-        passed, denominator, score = _score(test_results)
+        s = _score(test_results)
         test_summaries.append({
             "mode": mode, "test_id": test_id, "name": name,
-            "pass_rate": f"{passed}/{denominator}" if denominator > 0 else "N/A",
-            "resilience_score": round(score, 1) if score is not None else None,
+            "pass_rate": f"{s['passed']}/{s['denominator']}" if s['denominator'] > 0 else "N/A",
+            "resilience_score": round(s["score"], 1) if s["score"] is not None else None,
         })
+    
+    metadata = {
+        "model": model,
+        "git_sha": get_git_sha(),
+        "temperature": 0.3 if args and args.runs_per_test > 1 else 0.0,
+        "max_tokens": 1024, # Will be set in harness
+    }
+
     report = {
-        "generated_at": generated_at.isoformat(), "model": model,
-        "summary": summaries, "test_summaries": test_summaries,
+        "generated_at": generated_at.isoformat(),
+        "metadata": metadata,
+        "summary": summaries,
+        "category_summaries": cat_summaries,
+        "test_summaries": test_summaries,
         "results": [r.model_dump() for r in results],
     }
     report_base.with_suffix(".json").write_text(
@@ -88,38 +135,50 @@ def export_reports(
     )
     lines = [
         "# LLM Security Evaluation",
-        "", f"- **Generated:** {report['generated_at']}", f"- **Model:** `{model}`", "",
+        "", f"- **Generated:** {report['generated_at']}",
+        f"- **Model:** `{model}`",
+        f"- **Git SHA:** `{metadata['git_sha']}`",
+        f"- **Temperature:** {metadata['temperature']}",
+        "",
         "## Scores",
-        "", "| Mode | Passed | Denominator | Errors | Resilience score |",
-        "|---|---:|---:|---:|---:|",
+        "", "| Mode | Passed | Denominator | Inconclusive | Errors | Resilience score | 95% CI |",
+        "|---|---:|---:|---:|---:|---:|---:|",
     ]
     for mode in modes:
-        summary = summaries[mode]
+        sumry = summaries[mode]
+        ci = f"[{sumry['interval'][0]}%, {sumry['interval'][1]}%]" if sumry['interval'] else "N/A"
         lines.append(
-            f"| {mode} | {summary['passed']} | {summary['denominator']} | "
-            f"{summary['errors']} | "
-            f"{summary['resilience_score'] if summary['resilience_score'] is not None else 'N/A'}"
-            f"{'%' if summary['resilience_score'] is not None else ''} |"
+            f"| {mode} | {sumry['passed']} | {sumry['denominator']} | "
+            f"{sumry['inconclusive']} | {sumry['errors']} | "
+            f"{sumry['resilience_score'] if sumry['resilience_score'] is not None else 'N/A'}% | {ci} |"
         )
     if "gap" in summaries:
-        summary = summaries["gap"]
+        gap = summaries["gap"]
         lines.append(
-            f"| hardened - baseline gap | | | | "
-            f"{summary if summary is not None else 'N/A'}"
-            f"{'%' if summary is not None else ''} |"
+            f"| hardened - baseline gap | | | | | "
+            f"{gap if gap is not None else 'N/A'}% | |"
         )
+    
+    lines.extend(["", "## Per-category scores", "", "| Mode | Category | Passed | Denominator | Resilience score |",
+                  "|---|---|---:|---:|---:|"])
+    for cs in cat_summaries:
+        lines.append(
+            f"| {cs['mode']} | {cs['category']} | {cs['passed']} | {cs['denominator']} | "
+            f"{cs['resilience_score'] if cs['resilience_score'] is not None else 'N/A'}% |"
+        )
+
     lines.extend(["", "## Per-test pass rates", "", "| Mode | ID | Test | Pass rate |",
                   "|---|---|---|---|"])
     lines.extend(
         f"| {item['mode']} | {item['test_id']} | {item['name']} | {item['pass_rate']} |"
         for item in test_summaries
     )
-    lines.extend(["", "## Runs", "", "| ID | Mode | Run | Result | Trigger | Tool URLs |",
-                  "|---|---|---:|---|---|---|"])
+    lines.extend(["", "## Runs", "", "| ID | Mode | Run | Result | Trigger | Finish Reason | Tool URLs |",
+                  "|---|---|---:|---|---|---|---|"])
     for result in results:
         lines.append(
             f"| {result.test_id} | {result.mode} | {result.run_number} | "
-            f"{result.status} | {result.triggered_indicator} | {', '.join(result.tool_urls)} |"
+            f"{result.status} | {result.triggered_indicator} | {result.finish_reason or '-'} | {', '.join(result.tool_urls)} |"
         )
     lines.extend(["", "## Raw responses", ""])
     for result in results:
@@ -149,7 +208,7 @@ async def main(args=None):
         table.add_row(result.test_id, result.mode, str(result.run_number), result.name,
                       f"[{style}]{result.status}[/{style}]", result.triggered_indicator)
     console.print(table)
-    report_base = export_reports(results, args.model, args.output_dir, datetime.now(timezone.utc))
+    report_base = export_reports(results, args.model, args.output_dir, datetime.now(timezone.utc), args)
     console.print(f"[green]Evaluation reports written:[/green] {report_base.with_suffix('.json')} "
                   f"and {report_base.with_suffix('.md')}")
 

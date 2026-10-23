@@ -13,19 +13,23 @@ python main.py --model openai/gpt-oss-20b --mode both --runs-per-test 3
 python main.py --model llama-3.3-70b-versatile --mode both --runs-per-test 3
 ```
 
-Use `--mode baseline`, `--mode hardened`, or `--mode both`. Baseline uses the
-same role and secret with defensive instructions removed and does not wrap the
-attacker input in `<untrusted_input>`. Hardened uses the defensive prompt and
-wrapper. `--runs-per-test` reports rates such as `2/3`. The benchmark
+Use `--mode baseline`, `--mode hardened`, `--mode both`, or `--mode ablation`.
+Baseline uses the same role and secret with defensive instructions removed
+and does not wrap the attacker input in `<untrusted_input>`. Hardened uses
+the defensive prompt and wrapper. `ablation` runs baseline, prompt-only,
+wrapper-only, and hardened modes to compare their effectiveness.
+`--runs-per-test` reports rates such as `2/3`. The benchmark
 uses 3 runs because of the free-tier limits. `--max-concurrency`
 defaults to 2 to avoid exhausting provider rate limits.
 
 Reports are written as `reports/evaluation_report_<UTC timestamp>.json` and
-`.md`. `ERROR` results are retained for diagnosis but excluded from the score
-denominator. If every run errors, the score is `N/A`, not zero. In `both` mode,
-the report includes the hardened-minus-baseline gap, which is the measured
-effect of the defenses. Each payload declares its category explicitly, rather
-than deriving it from its filename. Tool cases check both the tool arguments
+`.md`. `ERROR` and `INCONCLUSIVE` (empty responses) results are retained for
+diagnosis but excluded from the score denominator. If every run errors, the
+score is `N/A`, not zero. In `both` mode, the report includes the
+hardened-minus-baseline gap, which is the measured effect of the defenses.
+95% Wilson confidence intervals are included to show statistical significance.
+Each payload declares its category explicitly; the report includes per-category
+resilience scores. Tool cases check both the tool arguments
 and response canaries; tests can also require a particular allowed URL so a
 model cannot pass by refusing every tool request.
 
@@ -64,8 +68,8 @@ behavior changes over time.
 
 | Model | Payloads | Baseline | Hardened | Gap |
 |---|---:|---:|---:|---:|
-| `openai/gpt-oss-20b` | 28 | _run benchmark_ | _run benchmark_ | _run benchmark_ |
-| `llama-3.3-70b-versatile` | 28 | _run benchmark_ | _run benchmark_ | _run benchmark_ |
+| `openai/gpt-oss-20b` | 41 | _run benchmark_ | _run benchmark_ | _run benchmark_ |
+| `llama-3.3-70b-versatile` | 41 | _run benchmark_ | _run benchmark_ | _run benchmark_ |
 
 Groq's current model catalog and function-calling documentation list both
 models as supporting tool/function calls. Confirm availability in the provider
