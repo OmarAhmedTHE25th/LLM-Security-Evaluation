@@ -30,6 +30,10 @@ class HarnessTests(unittest.TestCase):
     def test_encoded_payloads_contain_a_forbidden_canary(self):
         encoded_token = re.compile(r"(?<![A-Za-z0-9+/=])[A-Za-z0-9+/]{8,}={0,2}(?![A-Za-z0-9+/=])")
         for test, _ in load_all_payloads("payloads"):
+            # LEAK-04 was changed to request base64 instead of providing it,
+            # so it no longer contains an encoded canary in the input.
+            if test.id == "LEAK-04":
+                continue
             claims_encoding = "encoded" in test.name.lower() or "base64" in test.name.lower()
             if not claims_encoding:
                 continue
@@ -151,6 +155,7 @@ class HarnessTests(unittest.TestCase):
             markdown = report.with_suffix(".md").read_text(encoding="utf-8")
         self.assertIsNone(data["summary"]["resilience_score"])
         self.assertIsNone(data["test_summaries"][0]["resilience_score"])
+        self.assertEqual(data["test_summaries"][0]["pass_rate"], "N/A")
         self.assertIn("N/A |", markdown)
 
 

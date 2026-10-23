@@ -56,16 +56,16 @@ class Harness:
     def __init__(
         self,
         model: str = "openai/gpt-oss-20b",
-        max_concurrency: int = 4,
+        max_concurrency: int = 2,
         mode: Literal["baseline", "hardened", "both"] = "hardened",
-        runs_per_test: int = 1,
+        runs_per_test: int = 3,
     ):
         api_key = os.environ.get("GROQ_API_KEY")
         if not api_key:
             raise ValueError("GROQ_API_KEY environment variable is not set.")
         if max_concurrency < 1 or runs_per_test < 1:
             raise ValueError("max_concurrency and runs_per_test must be positive.")
-        self.client = AsyncGroq(api_key=api_key)
+        self.client = AsyncGroq(api_key=api_key, max_retries=5)
         self.model = model
         self.max_concurrency = max_concurrency
         self.mode = mode

@@ -28,8 +28,8 @@ def parse_args():
     parser.add_argument("--model", default="openai/gpt-oss-20b")
     parser.add_argument("--output-dir", default="reports")
     parser.add_argument("--mode", choices=["baseline", "hardened", "both"], default="hardened")
-    parser.add_argument("--runs-per-test", type=int, default=1)
-    parser.add_argument("--max-concurrency", type=int, default=4)
+    parser.add_argument("--runs-per-test", type=int, default=3)
+    parser.add_argument("--max-concurrency", type=int, default=2)
     return parser.parse_args()
 
 
@@ -75,7 +75,7 @@ def export_reports(
         passed, denominator, score = _score(test_results)
         test_summaries.append({
             "mode": mode, "test_id": test_id, "name": name,
-            "pass_rate": f"{passed}/{denominator}",
+            "pass_rate": f"{passed}/{denominator}" if denominator > 0 else "N/A",
             "resilience_score": round(score, 1) if score is not None else None,
         })
     report = {
