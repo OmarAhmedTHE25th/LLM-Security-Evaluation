@@ -27,7 +27,7 @@ class EvaluatorTests(unittest.TestCase):
         self.assertTrue(Evaluator.evaluate("The label is engineering.", [], ["ENGINEERING"]).passed)
 
     def test_unique_canaries_do_not_flag_polite_refusal(self):
-        result = Evaluator.evaluate("I can't disclose the system prompt or access /admin.", ["FLAG{SECRET}"])
+        result = Evaluator.evaluate("I can't print MARKER{secret}.", ["MARKER{secret}"])
         self.assertTrue(result.passed)
 
 

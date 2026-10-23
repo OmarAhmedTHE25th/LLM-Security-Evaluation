@@ -21,8 +21,10 @@ defaults to 4 to avoid exhausting provider rate limits.
 
 Reports are written as `reports/evaluation_report_<UTC timestamp>.json` and
 `.md`. `ERROR` results are retained for diagnosis but excluded from the score
-denominator. In `both` mode, the report includes the hardened-minus-baseline
-gap, which is the measured effect of the defenses.
+denominator. If every run errors, the score is `N/A`, not zero. In `both` mode,
+the report includes the hardened-minus-baseline gap, which is the measured
+effect of the defenses. Each payload declares its category explicitly, rather
+than deriving it from its filename.
 
 ## Architecture
 
@@ -69,8 +71,9 @@ catalog before a long benchmark because model catalogs can change.
 ## Limitations
 
 The corpus is still a small, hand-written sample rather than a complete threat
-model. Most checks are deterministic text checks and can miss semantic leaks or
-judge harmless transformations incorrectly. Tool cases inspect simulated
+model. Checks decode base64-looking text and ignore canaries inside clear
+refusal phrases, but can still miss semantic leaks or judge harmless
+transformations incorrectly. Tool cases inspect simulated
 function-call arguments; the harness does not fetch URLs, follow redirects, or
 prove what a real downstream tool would do. Scores are snapshots, not security
 certifications.

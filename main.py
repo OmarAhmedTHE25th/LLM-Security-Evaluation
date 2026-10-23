@@ -17,9 +17,9 @@ from harness import Harness, RunResult, TestCase
 def load_all_payloads(payloads_dir: str) -> list[tuple[TestCase, str]]:
     suite = []
     for filepath in sorted(glob.glob(os.path.join(payloads_dir, "*.json"))):
-        category = Path(filepath).stem.replace("_", " ").title()
         with open(filepath, "r", encoding="utf-8") as file:
-            suite.extend((TestCase(**item), category) for item in json.load(file))
+            tests = [TestCase(**item) for item in json.load(file)]
+            suite.extend((test, test.category) for test in tests)
     return suite
 
 
@@ -33,10 +33,10 @@ def parse_args():
     return parser.parse_args()
 
 
-def _score(results: list[RunResult]) -> tuple[int, int, float]:
+def _score(results: list[RunResult]) -> tuple[int, int, float | None]:
     usable = [result for result in results if result.status != "ERROR"]
     passed = sum(result.passed for result in usable)
-    return passed, len(usable), passed / len(usable) * 100 if usable else 0.0
+    return passed, len(usable), passed / len(usable) * 100 if usable else None
 
 
 def export_reports(
@@ -53,16 +53,19 @@ def export_reports(
         summaries[mode] = {
             "passed": passed, "denominator": denominator,
             "errors": sum(r.status == "ERROR" for r in results if r.mode == mode),
-            "resilience_score": round(score, 1),
+            "resilience_score": round(score, 1) if score is not None else None,
         }
     if len(modes) == 1:
         summaries["passed"] = summaries[modes[0]]["passed"]
         summaries["total"] = summaries[modes[0]]["denominator"]
         summaries["resilience_score"] = summaries[modes[0]]["resilience_score"]
     if "baseline" in summaries and "hardened" in summaries:
-        summaries["gap"] = round(
-            summaries["hardened"]["resilience_score"] -
-            summaries["baseline"]["resilience_score"], 1
+        baseline_score = summaries["baseline"]["resilience_score"]
+        hardened_score = summaries["hardened"]["resilience_score"]
+        summaries["gap"] = (
+            round(hardened_score - baseline_score, 1)
+            if baseline_score is not None and hardened_score is not None
+            else None
         )
     grouped: dict[tuple[str, str, str], list[RunResult]] = defaultdict(list)
     for result in results:
@@ -72,7 +75,8 @@ def export_reports(
         passed, denominator, score = _score(test_results)
         test_summaries.append({
             "mode": mode, "test_id": test_id, "name": name,
-            "pass_rate": f"{passed}/{denominator}", "resilience_score": round(score, 1),
+            "pass_rate": f"{passed}/{denominator}",
+            "resilience_score": round(score, 1) if score is not None else None,
         })
     report = {
         "generated_at": generated_at.isoformat(), "model": model,
@@ -93,11 +97,15 @@ def export_reports(
         summary = summaries[mode]
         lines.append(
             f"| {mode} | {summary['passed']} | {summary['denominator']} | "
-            f"{summary['errors']} | {summary['resilience_score']:.1f}% |"
+            f"{summary['errors']} | "
+            f"{summary['resilience_score'] if summary['resilience_score'] is not None else 'N/A'}% |"
         )
     if "gap" in summaries:
         summary = summaries["gap"]
-        lines.append(f"| hardened - baseline gap | | | | {summary:.1f}% |")
+        lines.append(
+            f"| hardened - baseline gap | | | | "
+            f"{summary if summary is not None else 'N/A'}% |"
+        )
     lines.extend(["", "## Per-test pass rates", "", "| Mode | ID | Test | Pass rate |",
                   "|---|---|---|---|"])
     lines.extend(
