@@ -14,8 +14,6 @@ env/
 .idea/
 .vscode/
 
-# Generated audit reports
-reports/
 
 # Coverage and build artifacts
 .coverage
