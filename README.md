@@ -9,13 +9,14 @@ system-prompt leakage resilience through the Groq API.
 pip install -r requirements.txt
 set GROQ_API_KEY=your-key
 python main.py --model openai/gpt-oss-20b
-python main.py --model llama-3.3-70b-versatile --output-dir reports
+python main.py --model llama-3.3-70b-versatile
 ```
 
-Each run writes both `audit_report_<UTC timestamp>.json` and
-`audit_report_<UTC timestamp>.md`. JSON is intended for ingestion into audit
-pipelines; Markdown is intended for human review. A test passes when its
-forbidden indicators are absent from the model response.
+Each run writes both `reports/audit_report_<UTC timestamp>.json` and
+`reports/audit_report_<UTC timestamp>.md`. JSON is intended for ingestion into
+audit pipelines; Markdown is intended for human review. Use `--output-dir` to
+override the reports directory. A test passes when its forbidden indicators
+are absent from the model response.
 
 ## Architecture
 
@@ -54,3 +55,10 @@ identical-vector comparisons:
 
 Results are intentionally generated from live runs rather than hard-coded:
 model behavior, provider versions, and safety tuning can change over time.
+
+## CI/CD
+
+GitHub Actions runs on pushes and pull requests. The workflow installs the
+minimal dependencies, compiles the Python modules, validates all payload JSON
+fixtures, and runs the unit tests for report generation. It does not call the
+Groq API, so CI does not require `GROQ_API_KEY`.

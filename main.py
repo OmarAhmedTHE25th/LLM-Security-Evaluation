@@ -35,7 +35,7 @@ def parse_args():
     )
     parser.add_argument(
         "--output-dir",
-        default=".",
+        default="reports",
         help="Directory for timestamped JSON and Markdown audit reports.",
     )
     return parser.parse_args()
