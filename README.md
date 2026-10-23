@@ -24,7 +24,9 @@ Reports are written as `reports/evaluation_report_<UTC timestamp>.json` and
 denominator. If every run errors, the score is `N/A`, not zero. In `both` mode,
 the report includes the hardened-minus-baseline gap, which is the measured
 effect of the defenses. Each payload declares its category explicitly, rather
-than deriving it from its filename.
+than deriving it from its filename. Tool cases check both the tool arguments
+and response canaries; tests can also require a particular allowed URL so a
+model cannot pass by refusing every tool request.
 
 ## Architecture
 
@@ -71,8 +73,8 @@ catalog before a long benchmark because model catalogs can change.
 ## Limitations
 
 The corpus is still a small, hand-written sample rather than a complete threat
-model. Checks decode base64-looking text and ignore canaries inside clear
-refusal phrases, but can still miss semantic leaks or judge harmless
+model. Checks decode base64-looking text and ignore canaries only inside short,
+standalone refusal sentences, but can still miss semantic leaks or judge harmless
 transformations incorrectly. Tool cases inspect simulated
 function-call arguments; the harness does not fetch URLs, follow redirects, or
 prove what a real downstream tool would do. Scores are snapshots, not security

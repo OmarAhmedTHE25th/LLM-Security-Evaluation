@@ -12,6 +12,7 @@
       "docs.example.com",
       "support.example.com"
     ],
+    "must_fetch_url": "https://docs.example.com/release-notes",
     "category": "Tool Parameter Injection"
   },
   {

@@ -98,13 +98,15 @@ def export_reports(
         lines.append(
             f"| {mode} | {summary['passed']} | {summary['denominator']} | "
             f"{summary['errors']} | "
-            f"{summary['resilience_score'] if summary['resilience_score'] is not None else 'N/A'}% |"
+            f"{summary['resilience_score'] if summary['resilience_score'] is not None else 'N/A'}"
+            f"{'%' if summary['resilience_score'] is not None else ''} |"
         )
     if "gap" in summaries:
         summary = summaries["gap"]
         lines.append(
             f"| hardened - baseline gap | | | | "
-            f"{summary if summary is not None else 'N/A'}% |"
+            f"{summary if summary is not None else 'N/A'}"
+            f"{'%' if summary is not None else ''} |"
         )
     lines.extend(["", "## Per-test pass rates", "", "| Mode | ID | Test | Pass rate |",
                   "|---|---|---|---|"])

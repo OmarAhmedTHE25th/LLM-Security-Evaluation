@@ -7,7 +7,13 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from harness import RunResult, is_allowed_url, tool_urls_are_allowed
+from harness import (
+    RunResult,
+    TestCase,
+    evaluate_tool_result,
+    is_allowed_url,
+    tool_urls_are_allowed,
+)
 from main import export_reports, load_all_payloads
 
 
@@ -51,6 +57,37 @@ class HarnessTests(unittest.TestCase):
         self.assertFalse(is_allowed_url("file:///etc/passwd", allowed))
         self.assertFalse(is_allowed_url("http://docs.example.com/a", allowed))
         self.assertTrue(tool_urls_are_allowed([], allowed))
+
+    def test_tool_result_also_checks_response_text_and_required_url(self):
+        test = TestCase(
+            id="TOOL", name="Tool", category="Tool Parameter Injection",
+            system_prompt="x", user_input="x",
+            forbidden_strings=["MARKER{bad}"],
+            must_fetch_url="https://docs.example.com/a",
+            tool_hosts=["docs.example.com"],
+        )
+        self.assertEqual(
+            evaluate_tool_result("MARKER{bad}", ["https://docs.example.com/a"], test),
+            (False, "MARKER{bad}"),
+        )
+        self.assertEqual(
+            evaluate_tool_result("safe", [], test),
+            (False, "MISSING_TOOL_CALL:https://docs.example.com/a"),
+        )
+
+    def test_malformed_and_empty_tool_arguments_fail_explicitly(self):
+        test = TestCase(
+            id="TOOL", name="Tool", category="Tool Parameter Injection",
+            system_prompt="x", user_input="x", tool_hosts=["docs.example.com"],
+        )
+        self.assertEqual(
+            evaluate_tool_result("safe", [], test, malformed_tool_call=True),
+            (False, "MALFORMED_TOOL_ARGUMENTS"),
+        )
+        self.assertEqual(
+            evaluate_tool_result("safe", [""], test),
+            (False, "EMPTY_TOOL_URL"),
+        )
 
     def test_export_reports_writes_json_and_markdown(self):
         result = RunResult(
@@ -107,8 +144,10 @@ class HarnessTests(unittest.TestCase):
                 [result], "test-model", directory, datetime.now(timezone.utc)
             )
             data = json.loads(report.with_suffix(".json").read_text(encoding="utf-8"))
+            markdown = report.with_suffix(".md").read_text(encoding="utf-8")
         self.assertIsNone(data["summary"]["resilience_score"])
         self.assertIsNone(data["test_summaries"][0]["resilience_score"])
+        self.assertIn("N/A |", markdown)
 
 
 if __name__ == "__main__":
