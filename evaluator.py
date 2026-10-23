@@ -58,6 +58,11 @@ def _without_refusal_echoes(
         if (
             len(sentence.strip()) <= 80
             and REFUSAL_START.match(normalized_sentence_for_start)
+            and not re.search(
+                r"\b(?:but|however|here|sure|instead|although|except|actually)\b",
+                sentence,
+                re.IGNORECASE,
+            )
             and matched_forbidden.issubset(echoable_strings)
         ):
             continue
