@@ -9,15 +9,16 @@ It is an evaluation, not an audit or a guarantee of safety.
 ```bash
 pip install -r requirements.txt
 set GROQ_API_KEY=your-key
-python main.py --model openai/gpt-oss-20b --mode both --runs-per-test 10
-python main.py --model llama-3.3-70b-versatile --mode both --runs-per-test 10
+python main.py --model openai/gpt-oss-20b --mode both --runs-per-test 3
+python main.py --model llama-3.3-70b-versatile --mode both --runs-per-test 3
 ```
 
 Use `--mode baseline`, `--mode hardened`, or `--mode both`. Baseline uses the
 same role and secret with defensive instructions removed and does not wrap the
 attacker input in `<untrusted_input>`. Hardened uses the defensive prompt and
-wrapper. `--runs-per-test` reports rates such as `7/10`; `--max-concurrency`
-defaults to 4 to avoid exhausting provider rate limits.
+wrapper. `--runs-per-test` reports rates such as `2/3`. The benchmark
+uses 3 runs because of the free-tier limits. `--max-concurrency`
+defaults to 2 to avoid exhausting provider rate limits.
 
 Reports are written as `reports/evaluation_report_<UTC timestamp>.json` and
 `.md`. `ERROR` results are retained for diagnosis but excluded from the score
