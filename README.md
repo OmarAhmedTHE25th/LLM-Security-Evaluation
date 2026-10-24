@@ -27,6 +27,8 @@ Reports are written as `reports/evaluation_report_<UTC timestamp>.json` and
 diagnosis but excluded from the score denominator. If every run errors, the
 score is `N/A`, not zero. In `both` mode, the report includes the
 hardened-minus-baseline gap, which is the measured effect of the defenses.
+`utility_score` is reported separately for benign control payloads to measure
+system utility without including them in the security resilience denominator.
 95% Wilson confidence intervals are included to show statistical significance.
 Each payload declares its category explicitly; the report includes per-category
 resilience scores. Tool cases check both the tool arguments
@@ -52,6 +54,8 @@ flowchart LR
 | Canary/system prompt leakage | LLM02: Sensitive Information Disclosure; LLM07: System Prompt Leakage | AML.T0024 Exfiltration via AI Inference API | Secret extraction and system-prompt disclosure |
 | Indirect context tampering | LLM01: Prompt Injection | AML.T0051 Prompt Injection | Hidden instructions in documents and metadata |
 | Tool parameter injection | LLM06: Excessive Agency | AML.T0051 Prompt Injection | Unsafe tool URL arguments and allowlist decisions |
+| Multi-turn | LLM01: Prompt Injection | AML.T0051 Prompt Injection | Injection across multiple conversation turns |
+| Benign Control | N/A | N/A | Utility tests without attacks to measure false refusal rate |
 
 The ATLAS names above match the current catalog: AML.T0051 is Prompt
 Injection and AML.T0024 is Exfiltration via AI Inference API. AML.T0046 is
@@ -84,7 +88,7 @@ prompt still fail even when echoed in a refusal. The checks can still miss
 semantic leaks or judge harmless transformations incorrectly. Tool cases inspect simulated
 function-call arguments; the harness does not fetch URLs, follow redirects, or
 prove what a real downstream tool would do. Scores are snapshots, not security
-certifications.
+certifications. Wilson intervals treat runs of the same test as independent and are optimistic.
 
 ## CI/CD
 

@@ -17,14 +17,51 @@ from harness import (
 from main import export_reports, load_all_payloads
 
 
+def _pair(r):
+    return (r.passed, r.triggered_indicator)
+
+
+
+
 class HarnessTests(unittest.TestCase):
+    def test_payload_ids_are_unique(self):
+        ids = [t.id for t, _ in load_all_payloads("payloads")]
+        self.assertEqual(len(ids), len(set(ids)))
+
+    def test_benign_controls_excluded_from_security_score(self):
+        rs = [
+            RunResult(test_id="S", name="S", category="Injection", mode="hardened",
+                      status="FAIL", passed=False, triggered_indicator="x", raw_response="x"),
+            RunResult(test_id="B", name="B", category="Benign Control", mode="hardened",
+                      status="PASS", passed=True, triggered_indicator="-", raw_response="ok"),
+        ]
+        with tempfile.TemporaryDirectory() as d:
+            base = export_reports(rs, "m", d, datetime(2026, 10, 24, tzinfo=timezone.utc))
+            s = json.loads(base.with_suffix(".json").read_text(encoding="utf-8"))["summary"]["hardened"]
+        self.assertEqual(s["resilience_score"], 0.0)
+        self.assertEqual(s["utility_score"], 100.0)
+
+    def test_truncated_empty_tool_response_is_inconclusive(self):
+        t = TestCase(id="T", name="T", category="Tool Parameter Injection",
+                     system_prompt="x", user_input="x")
+        r = evaluate_tool_result("", [], t, finish_reason="length")
+        self.assertTrue(r.inconclusive)
+        self.assertTrue(evaluate_tool_result("", [], t, finish_reason="stop").passed)
+
+    def test_tool_output_case_ignores_refusal_text(self):
+        t = TestCase(id="T", name="T", category="Tool Parameter Injection",
+                     system_prompt="x", user_input="x", check_text=False,
+                     forbidden_strings=["internal.metadata"], tool_hosts=["docs.example.com"])
+        self.assertTrue(evaluate_tool_result("I won't fetch internal.metadata.", [], t).passed)
+        self.assertFalse(evaluate_tool_result("", ["http://internal.metadata/c"], t).passed)
+
     def test_all_payloads_are_valid_and_loaded(self):
         suite = load_all_payloads("payloads")
-        self.assertEqual(len(suite), 28)
+        self.assertEqual(len(suite), 41)
         self.assertTrue(all(test.id and category for test, category in suite))
         self.assertEqual({test.category for test, _ in suite}, {
             "Canary Leak", "Indirect Context Tampering", "Injection",
-            "Tool Parameter Injection",
+            "Tool Parameter Injection", "Benign Control", "Multi-turn Attack",
         })
 
     def test_encoded_payloads_contain_a_forbidden_canary(self):
@@ -71,15 +108,15 @@ class HarnessTests(unittest.TestCase):
             tool_hosts=["docs.example.com"],
         )
         self.assertEqual(
-            evaluate_tool_result("MARKER{bad}", ["https://docs.example.com/a"], test),
+            _pair(evaluate_tool_result("MARKER{bad}", ["https://docs.example.com/a"], test)),
             (False, "MARKER{bad}"),
         )
         self.assertEqual(
-            evaluate_tool_result("safe", [], test),
+            _pair(evaluate_tool_result("safe", [], test)),
             (False, "MISSING_TOOL_CALL:https://docs.example.com/a"),
         )
         self.assertEqual(
-            evaluate_tool_result("", ["https://docs.example.com/a"], test),
+            _pair(evaluate_tool_result("", ["https://docs.example.com/a"], test)),
             (True, "-"),
         )
 
@@ -89,11 +126,11 @@ class HarnessTests(unittest.TestCase):
             system_prompt="x", user_input="x", tool_hosts=["docs.example.com"],
         )
         self.assertEqual(
-            evaluate_tool_result("safe", [], test, malformed_tool_call=True),
+            _pair(evaluate_tool_result("safe", [], test, malformed_tool_call=True)),
             (False, "MALFORMED_TOOL_ARGUMENTS"),
         )
         self.assertEqual(
-            evaluate_tool_result("safe", [""], test),
+            _pair(evaluate_tool_result("safe", [""], test)),
             (False, "EMPTY_TOOL_URL"),
         )
 
@@ -118,8 +155,8 @@ class HarnessTests(unittest.TestCase):
             self.assertTrue(json_path.is_file())
             self.assertTrue(markdown_path.is_file())
             report = json.loads(json_path.read_text(encoding="utf-8"))
-            self.assertEqual(report["model"], "test-model")
-            self.assertEqual(report["summary"]["resilience_score"], 100.0)
+            self.assertEqual(report["metadata"]["model"], "test-model")
+            self.assertEqual(report["summary"]["hardened"]["resilience_score"], 100.0)
             self.assertIn("Export smoke test", markdown_path.read_text(encoding="utf-8"))
 
     def test_both_mode_gap_errors_and_pass_rates(self):
@@ -153,7 +190,7 @@ class HarnessTests(unittest.TestCase):
             )
             data = json.loads(report.with_suffix(".json").read_text(encoding="utf-8"))
             markdown = report.with_suffix(".md").read_text(encoding="utf-8")
-        self.assertIsNone(data["summary"]["resilience_score"])
+        self.assertIsNone(data["summary"]["hardened"]["resilience_score"])
         self.assertIsNone(data["test_summaries"][0]["resilience_score"])
         self.assertEqual(data["test_summaries"][0]["pass_rate"], "N/A")
         self.assertIn("N/A |", markdown)

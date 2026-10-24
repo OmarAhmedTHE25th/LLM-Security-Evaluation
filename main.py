@@ -13,8 +13,17 @@ from typing import Any
 from rich.console import Console
 from rich.table import Table
 
-from harness import Harness, RunResult, TestCase
+from harness import Harness, RunResult, TestCase, MAX_COMPLETION_TOKENS
 
+BENIGN = "Benign Control"
+
+
+def _pct(value: float | None) -> str:
+    return f"{value}%" if value is not None else "N/A"
+
+
+def _r1(value: float | None) -> float | None:
+    return round(value, 1) if value is not None else None
 
 def load_all_payloads(payloads_dir: str) -> list[tuple[TestCase, str]]:
     suite = []
@@ -22,6 +31,11 @@ def load_all_payloads(payloads_dir: str) -> list[tuple[TestCase, str]]:
         with open(filepath, "r", encoding="utf-8") as file:
             tests = [TestCase(**item) for item in json.load(file)]
             suite.extend((test, test.category) for test in tests)
+            ids = [test.id for test, _ in suite]
+            dupes = sorted({i for i in ids if ids.count(i) > 1})
+            if dupes:
+                raise ValueError(f"Duplicate payload IDs: {dupes}")
+            return suite
     return suite
 
 
@@ -43,6 +57,7 @@ def get_git_sha() -> str:
 
 
 def wilson_interval(passed: int, n: int) -> tuple[float, float]:
+    """Calculates statistical confidence interval for success rate"""
     if n == 0:
         return 0.0, 0.0
     z = 1.96
@@ -74,6 +89,7 @@ def export_reports(
     results: list[RunResult], model: str, output_dir: str, generated_at: datetime,
     args: argparse.Namespace | None = None
 ) -> Path:
+    """Aggregates evaluation results into structured JSON and Markdown reports"""
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
     timestamp = generated_at.strftime("%Y_%m_%dT%H_%M_%SZ")
@@ -81,27 +97,30 @@ def export_reports(
     modes = sorted({result.mode for result in results})
     categories = sorted({result.category for result in results})
     summaries: dict[str, Any] = {}
+
     for mode in modes:
-        s = _score([r for r in results if r.mode == mode])
+        mode_results = [r for r in results if r.mode == mode]
+        s = _score([r for r in mode_results if r.category != BENIGN])
+        u = _score([r for r in mode_results if r.category == BENIGN])
         summaries[mode] = {
             "passed": s["passed"], "denominator": s["denominator"],
             "errors": s["errors"], "inconclusive": s["inconclusive"],
-            "resilience_score": round(s["score"], 1) if s["score"] is not None else None,
+            "resilience_score": _r1(s["score"]),
             "interval": [round(s["lower"], 1), round(s["upper"], 1)] if s["score"] is not None else None,
+            "utility_score": _r1(u["score"]),
+            "utility_passed": u["passed"], "utility_denominator": u["denominator"],
         }
-    if "baseline" in summaries and "hardened" in summaries:
-        b_score = summaries["baseline"]["resilience_score"]
-        h_score = summaries["hardened"]["resilience_score"]
-        summaries["gap"] = round(h_score - b_score, 1) if b_score is not None and h_score is not None else None
-
+    base = summaries.get("baseline", {}).get("resilience_score")
+    gaps = {
+        m: (_r1(summaries[m]["resilience_score"] - base)
+            if base is not None and summaries[m]["resilience_score"] is not None else None)
+        for m in modes if m != "baseline" and "baseline" in summaries
+    }
+    if gaps:
+        summaries["gaps_vs_baseline"] = gaps
+    if "hardened" in gaps:
+        summaries["gap"] = gaps["hardened"]
     cat_summaries = []
-    for mode in modes:
-        for cat in categories:
-            s = _score([r for r in results if r.mode == mode and r.category == cat])
-            cat_summaries.append({
-                "mode": mode, "category": cat, "passed": s["passed"], "denominator": s["denominator"],
-                "resilience_score": round(s["score"], 1) if s["score"] is not None else None,
-            })
 
     grouped: dict[tuple[str, str, str], list[RunResult]] = defaultdict(list)
     for result in results:
@@ -114,12 +133,14 @@ def export_reports(
             "pass_rate": f"{s['passed']}/{s['denominator']}" if s['denominator'] > 0 else "N/A",
             "resilience_score": round(s["score"], 1) if s["score"] is not None else None,
         })
-    
+
     metadata = {
-        "model": model,
-        "git_sha": get_git_sha(),
+        "model": model, "git_sha": get_git_sha(),
         "temperature": 0.3 if args and args.runs_per_test > 1 else 0.0,
-        "max_tokens": 1024, # Will be set in harness
+        "max_completion_tokens": MAX_COMPLETION_TOKENS,
+        "runs_per_test": args.runs_per_test if args else None,
+        "mode": args.mode if args else None,
+        "ci_note": "Runs of one test are correlated; intervals are optimistic.",
     }
 
     report = {
@@ -141,23 +162,20 @@ def export_reports(
         f"- **Temperature:** {metadata['temperature']}",
         "",
         "## Scores",
-        "", "| Mode | Passed | Denominator | Inconclusive | Errors | Resilience score | 95% CI |",
-        "|---|---:|---:|---:|---:|---:|---:|",
+        "", "| Mode | Passed | Denominator | Inconclusive | Errors | Resilience | 95% CI | Utility |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for mode in modes:
-        sumry = summaries[mode]
-        ci = f"[{sumry['interval'][0]}%, {sumry['interval'][1]}%]" if sumry['interval'] else "N/A"
+        sm = summaries[mode]
+        ci = f"[{sm['interval'][0]}%, {sm['interval'][1]}%]" if sm["interval"] else "N/A"
         lines.append(
-            f"| {mode} | {sumry['passed']} | {sumry['denominator']} | "
-            f"{sumry['inconclusive']} | {sumry['errors']} | "
-            f"{sumry['resilience_score'] if sumry['resilience_score'] is not None else 'N/A'}% | {ci} |"
+            f"| {mode} | {sm['passed']} | {sm['denominator']} | {sm['inconclusive']} | "
+            f"{sm['errors']} | {_pct(sm['resilience_score'])} | {ci} | "
+            f"{_pct(sm['utility_score'])} ({sm['utility_passed']}/{sm['utility_denominator']}) |"
         )
-    if "gap" in summaries:
-        gap = summaries["gap"]
-        lines.append(
-            f"| hardened - baseline gap | | | | | "
-            f"{gap if gap is not None else 'N/A'}% | |"
-        )
+    for m, g in summaries.get("gaps_vs_baseline", {}).items():
+        lines.append(f"| {m} - baseline gap | | | | | {_pct(g)} | | |")
+
     
     lines.extend(["", "## Per-category scores", "", "| Mode | Category | Passed | Denominator | Resilience score |",
                   "|---|---|---:|---:|---:|"])
