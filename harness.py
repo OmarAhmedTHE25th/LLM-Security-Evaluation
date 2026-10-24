@@ -3,13 +3,15 @@ import json
 import os
 from typing import Any, Literal, cast
 from urllib.parse import urlparse
-
 from groq import AsyncGroq
 from groq.types.chat import ChatCompletionMessageParam
 from pydantic import BaseModel, Field
-
 from evaluator import EvaluationResult, Evaluator
 import copy
+import time
+from collections import deque
+from groq import RateLimitError
+
 Mode = Literal["baseline", "hardened", "prompt_only", "wrapper_only"]
 ALLOWED_TOOL_HOSTS = {"docs.example.com", "support.example.com"}
 MAX_COMPLETION_TOKENS = 1024
@@ -27,6 +29,29 @@ FETCH_DOCUMENT_TOOL = {
 }
 
 
+
+
+
+
+class TokenBucket:
+    """Sliding 60s window over estimated tokens."""
+    def __init__(self, tpm: int):
+        self.tpm = tpm
+        self._events: deque[tuple[float, int]] = deque()
+        self._lock = asyncio.Lock()
+
+    async def acquire(self, tokens: int) -> None:
+        tokens = min(tokens, self.tpm)
+        while True:
+            async with self._lock:
+                now = time.monotonic()
+                while self._events and now - self._events[0][0] >= 60:
+                    self._events.popleft()
+                if sum(t for _, t in self._events) + tokens <= self.tpm:
+                    self._events.append((now, tokens))
+                    return
+                wait = 60 - (now - self._events[0][0])
+            await asyncio.sleep(max(wait, 0.5))
 class TestCase(BaseModel):
     id: str
     name: str
@@ -63,6 +88,8 @@ class Harness:
         max_concurrency: int = 2,
         mode: Literal["baseline", "hardened", "both", "ablation"] = "hardened",
         runs_per_test: int = 3,
+            tpm: int = 6500
+
     ):
         api_key = os.environ.get("GROQ_API_KEY")
         if not api_key:
@@ -75,6 +102,8 @@ class Harness:
         self.mode = mode
         self.runs_per_test = runs_per_test
         self._semaphore = asyncio.Semaphore(max_concurrency)
+        self.client = AsyncGroq(api_key=api_key, max_retries=1)
+        self._bucket = TokenBucket(tpm)
 
     async def run_single_test(
         self, test: TestCase, category: str | None = None, mode: Mode = "hardened", run_number: int = 1
@@ -111,8 +140,19 @@ class Harness:
                 request["tool_choice"] = "auto"
 
             # The SDK already retries 429s with Retry-After (max_retries=5).
-            async with self._semaphore:
-                completion = await self.client.chat.completions.create(**request)
+            est = sum(len(str(m.get("content") or "")) for m in msgs) // 3
+            est += MAX_COMPLETION_TOKENS + (200 if "tools" in request else 0)
+            completion = None
+            for attempt in range(6):
+                await self._bucket.acquire(est)
+                try:
+                    async with self._semaphore:
+                        completion = await self.client.chat.completions.create(**request)
+                    break
+                except RateLimitError:
+                    if attempt == 5:
+                        raise
+                    await asyncio.sleep(5 * (attempt + 1))
             message = completion.choices[0].message
             content = message.content or ""
             tool_urls = []

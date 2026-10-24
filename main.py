@@ -30,12 +30,12 @@ def load_all_payloads(payloads_dir: str) -> list[tuple[TestCase, str]]:
     for filepath in sorted(glob.glob(os.path.join(payloads_dir, "*.json"))):
         with open(filepath, "r", encoding="utf-8") as file:
             tests = [TestCase(**item) for item in json.load(file)]
-            suite.extend((test, test.category) for test in tests)
-            ids = [test.id for test, _ in suite]
-            dupes = sorted({i for i in ids if ids.count(i) > 1})
-            if dupes:
-                raise ValueError(f"Duplicate payload IDs: {dupes}")
-            return suite
+        suite.extend((test, test.category) for test in tests)
+
+    ids = [test.id for test, _ in suite]
+    dupes = sorted({i for i in ids if ids.count(i) > 1})
+    if dupes:
+        raise ValueError(f"Duplicate payload IDs: {dupes}")
     return suite
 
 
@@ -46,6 +46,7 @@ def parse_args():
     parser.add_argument("--mode", choices=["baseline", "hardened", "both", "ablation"], default="hardened")
     parser.add_argument("--runs-per-test", type=int, default=3)
     parser.add_argument("--max-concurrency", type=int, default=2)
+    parser.add_argument("--tpm", type=int, default=6500)
     return parser.parse_args()
 
 
@@ -215,7 +216,7 @@ async def main(args=None):
         return
     harness = Harness(
         model=args.model, max_concurrency=args.max_concurrency,
-        mode=args.mode, runs_per_test=args.runs_per_test,
+        mode=args.mode, runs_per_test=args.runs_per_test, tpm=args.tpm,
     )
     results = await harness.run_suite(suite)
     table = Table(show_header=True, header_style="bold white on blue")
